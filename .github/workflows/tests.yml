@@ -1,0 +1,236 @@
+name: TestPilot
+
+# Runs on every pull request and every push to main. The gating idea is a
+# staircase: the cheapest checks run first and stop the build early, and
+# the expensive browser suite only runs once the fast layers are green.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Nightly full regression against main, 02:00 UTC.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Suite to run
+        default: regression
+        type: choice
+        options: [smoke, regression, api, ui, db, security, boundary, headless_ci]
+
+concurrency:
+  # A new push supersedes an in-flight run of the same branch.
+  group: testpilot-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TESTPILOT_ENV: ci
+  # CI never depends on a model being reachable. The AI layer runs in its
+  # deterministic rule-based mode so a missing key can never redden a build.
+  TESTPILOT_AI: "off"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  # ---------------------------------------------------------------- 1 --
+  # The platform's own tests, including the evidence gate. If these fail,
+  # nothing the platform later reports can be trusted, so they gate
+  # everything else.
+  platform:
+    name: Platform unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate the test case library
+        run: python -m testpilot.cli coverage
+
+      - name: Run platform tests
+        run: python -m pytest tests/framework -q --tp-record --tp-suite=platform --tp-trigger=${{ github.event_name }}
+
+      - name: Upload results database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-results
+          path: artifacts/testpilot.db
+          retention-days: 7
+
+  # ---------------------------------------------------------------- 2 --
+  # Fast build acceptance. One path through every critical capability.
+  smoke:
+    name: Smoke suite
+    needs: platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run smoke suite
+        run: python -m testpilot.cli run smoke
+
+      - name: Export reports
+        if: always()
+        run: python -m testpilot.cli report --format html --format markdown --format junit
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-reports
+          path: artifacts/reports/
+          retention-days: 14
+
+  # ---------------------------------------------------------------- 3 --
+  # API and SQL layers, split from the browser suite so they report
+  # independently and a browser flake cannot mask an API regression.
+  api-and-data:
+    name: API and SQL suites
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [api, db]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run ${{ matrix.suite }} suite
+        run: python -m testpilot.cli run ${{ matrix.suite }}
+
+      - name: Export reports
+        if: always()
+        run: python -m testpilot.cli report --format junit --format html
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.suite }}-reports
+          path: artifacts/reports/
+          retention-days: 14
+
+  # ---------------------------------------------------------------- 4 --
+  # The browser suite. Slowest layer, so it runs last and keeps its
+  # screenshots and traces for anything that fails.
+  ui:
+    name: Browser suite
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run browser suite
+        env:
+          TESTPILOT_TRACE: retain-on-failure
+          TESTPILOT_KEEP_ARTIFACTS: "1"
+        run: python -m testpilot.cli run ui
+
+      - name: Export reports
+        if: always()
+        run: python -m testpilot.cli report --format html --format junit
+
+      - name: Upload failure screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-evidence
+          path: |
+            artifacts/reports/
+            artifacts/screenshots/
+            artifacts/traces/
+          retention-days: 14
+
+  # ---------------------------------------------------------------- 5 --
+  # Triage anything that failed and post a summary on the pull request.
+  # This job never fails the build: it reports, it does not gate.
+  report:
+    name: Triage and PR summary
+    needs: [platform, smoke, api-and-data, ui]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download every suite's results
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      - name: Build the pull request comment
+        id: summary
+        run: python tools/ci_summary.py --artifacts downloaded --output pr-comment.md
+
+      - name: Comment on the pull request
+        uses: peter-evans/create-or-update-comment@v4
+        continue-on-error: true
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: pr-comment.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-summary
+          path: pr-comment.md
+          retention-days: 14

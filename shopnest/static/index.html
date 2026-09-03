@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShopNest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">ShopNest</span>
+  <nav>
+    <a href="/products" data-testid="nav-products">Products</a>
+    <a href="/cart" data-testid="nav-cart">Cart (<span data-testid="cart-count">0</span>)</a>
+    <a href="/orders" data-testid="nav-orders">Orders</a>
+  </nav>
+  <span class="spacer"></span>
+  <span data-testid="nav-session"></span>
+</header>
+
+<main>
+  <h1 data-testid="page-title">Desk kit that just works</h1>
+  <p class="lede">ShopNest is the sample storefront that the TestPilot QA platform exercises.</p>
+  <div class="card">
+    <p>Browse the <a href="/products" data-testid="cta-products">catalogue</a>, or read the
+       <a href="/docs" data-testid="cta-docs">API documentation</a>.</p>
+    <p class="muted" data-testid="health-line">Checking service health...</p>
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+  api("/health").then((health) => {
+    document.querySelector("[data-testid='health-line']").textContent =
+      `${health.service} v${health.version} - ${health.products} products - fault profile: ${health.fault_profile}`;
+    markReady("home");
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+# Browser test cases, executed with Playwright through the page object model.
+#
+# Deliberately few. UI tests cover journeys only a browser can prove;
+# exhaustive permutations belong in the API suite where they are faster
+# and more stable.
+
+meta:
+  module: storefront
+  owner: QA
+  requirement_source: docs/test-plan.md
+
+cases:
+  - id: TC-UI-001
+    title: The storefront loads and shows the catalogue
+    module: storefront
+    layer: ui
+    type: smoke
+    priority: P1
+    objective: Confirm the application renders in a real browser at all.
+    preconditions:
+      - The application is deployed and the catalogue is seeded
+    steps:
+      - Navigate to /products
+      - Wait for the page to signal it has finished rendering
+      - Count the rendered product cards
+    expected: The heading reads "Catalogue" and at least ten product cards are rendered.
+    suites: [smoke, regression]
+    automation: tests/ui/test_shopping_journey.py::test_the_storefront_loads_and_shows_the_catalogue
+    requirement: REQ-UI-01
+
+  - id: TC-UI-002
+    title: A customer can sign in through the login form
+    module: storefront
+    layer: ui
+    type: smoke
+    priority: P1
+    objective: Exercise the real login form rather than an injected token.
+    preconditions:
+      - A seeded customer account exists
+    steps:
+      - Navigate to /login
+      - Enter the seeded email and password and submit
+      - Wait for the redirect
+    expected: The browser lands on /products and the header shows the signed-in email.
+    suites: [smoke, regression]
+    automation: tests/ui/test_shopping_journey.py::test_a_customer_can_sign_in_through_the_login_form
+    requirement: REQ-UI-02
+
+  - id: TC-UI-003
+    title: A customer can complete a purchase in the browser
+    module: storefront
+    layer: ui
+    type: smoke
+    priority: P1
+    objective: >-
+      The end-to-end revenue journey. If this test fails, the release is
+      blocked regardless of what else is green.
+    preconditions:
+      - A signed-in customer and an in-stock product
+    steps:
+      - Read the displayed price of a product on the catalogue
+      - Add it to the cart and open the cart page
+      - Confirm the line item and unit price match what was displayed
+      - Place the order
+      - Confirm the order in the database by its order number
+    expected: >-
+      The confirmation banner names the new order, the order shows status
+      PLACED with the total derived from the documented pricing rules, and a
+      matching row exists in the orders table.
+    suites: [smoke, regression]
+    automation: tests/ui/test_shopping_journey.py::test_a_customer_can_complete_a_purchase_in_the_browser
+    requirement: REQ-UI-03
+
+  - id: TC-UI-010
+    title: Signing in with a wrong password shows an error and stays on the page
+    module: storefront
+    layer: ui
+    type: negative
+    priority: P1
+    objective: Confirm the failure path is handled rather than swallowed.
+    preconditions:
+      - A seeded customer account exists
+    steps:
+      - Submit the login form with a valid email and an incorrect password
+      - Wait for the error message
+    expected: An invalid-credentials message is shown, the URL is still /login and no session is created.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_signing_in_with_a_wrong_password_shows_an_error_and_stays_on_the_page
+    requirement: REQ-UI-04
+
+  - id: TC-UI-011
+    title: Registering with a weak password shows the policy error
+    module: storefront
+    layer: ui
+    type: negative
+    priority: P2
+    objective: Confirm server-side validation surfaces in the browser.
+    preconditions:
+      - None
+    steps:
+      - Submit the registration form with a three-character password
+      - Wait for the error message
+    expected: A message naming the password policy is shown and the URL is still /register.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_registering_with_a_weak_password_shows_the_policy_error
+    requirement: REQ-UI-04
+
+  - id: TC-UI-012
+    title: The cart page redirects an anonymous visitor to login
+    module: storefront
+    layer: ui
+    type: security
+    priority: P1
+    objective: Confirm protected pages are not reachable without a session.
+    preconditions:
+      - Browser storage holds no session
+    steps:
+      - Clear local storage
+      - Navigate directly to /cart
+    expected: The browser is redirected to /login.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_the_cart_page_redirects_an_anonymous_visitor_to_login
+    requirement: REQ-UI-05
+
+  - id: TC-UI-013
+    title: An out-of-stock product cannot be added from the catalogue
+    module: storefront
+    layer: ui
+    type: negative
+    priority: P2
+    objective: Confirm the interface disables what the API would refuse.
+    preconditions:
+      - A seeded product has zero stock
+    steps:
+      - Locate the zero-stock product card
+      - Inspect its stock label and its add-to-cart button
+    expected: The card reads "Out of stock" and the add button is disabled.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_an_out_of_stock_product_cannot_be_added_from_the_catalogue
+    requirement: REQ-UI-06
+
+  - id: TC-UI-014
+    title: An invalid coupon shows an error and does not discount
+    module: storefront
+    layer: ui
+    type: negative
+    priority: P2
+    objective: Confirm a rejected coupon leaves the displayed totals untouched.
+    preconditions:
+      - A signed-in customer with a non-empty cart
+    steps:
+      - Record the cart totals
+      - Apply a coupon code that does not exist
+      - Re-read the totals
+    expected: A rejection message is shown and every total is unchanged.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_an_invalid_coupon_shows_an_error_and_does_not_discount
+    requirement: REQ-UI-07
+
+  - id: TC-UI-020
+    title: Search narrows the catalogue to matching products
+    module: storefront
+    layer: ui
+    type: functional
+    priority: P2
+    objective: Confirm search filters the rendered grid, not just the API response.
+    preconditions:
+      - The catalogue is seeded
+    steps:
+      - Record the unfiltered result count
+      - Search for a known product name
+    expected: Fewer products are shown and the expected SKU is among them.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_search_narrows_the_catalogue_to_matching_products
+    requirement: REQ-UI-08
+
+  - id: TC-UI-021
+    title: A search with no matches shows an empty state
+    module: storefront
+    layer: ui
+    type: boundary
+    priority: P3
+    objective: Confirm the empty state is rendered rather than a blank page.
+    preconditions:
+      - None
+    steps:
+      - Search for a term that matches nothing
+    expected: An explicit no-results message is shown and no product cards remain.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_a_search_with_no_matches_shows_an_empty_state
+    requirement: REQ-UI-08
+
+  - id: TC-UI-022
+    title: Sorting by price reorders the grid
+    module: storefront
+    layer: ui
+    type: functional
+    priority: P3
+    objective: Confirm the sort control reorders what is actually displayed.
+    preconditions:
+      - Products of differing prices exist
+    steps:
+      - Select the price sort option and submit
+      - Read the displayed prices in DOM order
+    expected: The displayed prices are in non-descending order.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_sorting_by_price_reorders_the_grid
+    requirement: REQ-UI-08
+
+  - id: TC-UI-023
+    title: The cart badge reflects what was added
+    module: storefront
+    layer: ui
+    type: functional
+    priority: P2
+    objective: Confirm shared page chrome updates after an action.
+    preconditions:
+      - A signed-in customer with an empty cart
+    steps:
+      - Add one product and wait for the confirmation
+      - Add a second product and wait for the badge to change
+    expected: The badge reads 1 after the first add and 2 after the second.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_the_cart_badge_reflects_what_was_added
+    requirement: REQ-UI-09
+
+  - id: TC-UI-024
+    title: Changing the quantity in the cart updates the totals
+    module: storefront
+    layer: ui
+    type: functional
+    priority: P2
+    objective: Confirm the cart recalculates without a page reload.
+    preconditions:
+      - A signed-in customer with one item in the cart
+    steps:
+      - Change the quantity field to 3
+      - Read the line total and the subtotal
+    expected: The line total and subtotal both equal unit price multiplied by 3.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_changing_the_quantity_in_the_cart_updates_the_totals
+    requirement: REQ-UI-10
+
+  - id: TC-UI-025
+    title: Removing the last item empties the cart and disables checkout
+    module: storefront
+    layer: ui
+    type: boundary
+    priority: P2
+    objective: Confirm the empty state disables an action that cannot succeed.
+    preconditions:
+      - A signed-in customer with exactly one item in the cart
+    steps:
+      - Remove the only line
+      - Wait for the table to empty
+    expected: The cart shows as empty and the checkout button is disabled.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_removing_the_last_item_empties_the_cart_and_disables_checkout
+    requirement: REQ-UI-10
+
+  - id: TC-UI-026
+    title: A valid coupon reduces the displayed total
+    module: storefront
+    layer: ui
+    type: functional
+    priority: P1
+    objective: Confirm the discount the customer is promised is the one shown.
+    preconditions:
+      - A signed-in customer with a non-empty cart and an active coupon
+    steps:
+      - Record the subtotal
+      - Apply the 10% coupon and wait for the discount to appear
+      - Compare every total against independently computed values
+    expected: The displayed totals match the documented pricing rules and the coupon code is shown as applied.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_a_valid_coupon_reduces_the_displayed_total
+    requirement: REQ-UI-07
+
+  - id: TC-UI-027
+    title: Signing out clears the session
+    module: storefront
+    layer: ui
+    type: security
+    priority: P1
+    objective: Confirm sign-out is real rather than cosmetic.
+    preconditions:
+      - A signed-in customer
+    steps:
+      - Click sign out
+      - Attempt to navigate directly to /cart
+    expected: The browser lands on /login and the protected page is no longer reachable.
+    suites: [regression]
+    automation: tests/ui/test_shopping_journey.py::test_signing_out_clears_the_session
+    requirement: REQ-UI-05
+
+  - id: TC-UI-030
+    title: The storefront is operable with a keyboard alone
+    module: storefront
+    layer: ui
+    type: functional
+    priority: P3
+    objective: Confirm the purchase journey does not require a pointing device.
+    preconditions:
+      - An accessibility review has defined the expected focus order
+    steps:
+      - Tab through the catalogue, add an item, tab to the cart and check out
+      - Confirm focus is visible at every step and no trap occurs
+    expected: >-
+      The journey completes using only the keyboard with a visible focus
+      indicator throughout. Manual until an axe-core audit is integrated.
+    suites: [manual]
+    automation: null
+    requirement: REQ-UI-11

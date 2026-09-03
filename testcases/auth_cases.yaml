@@ -1,0 +1,371 @@
+# Authentication and authorisation test cases.
+#
+# These are human-authored design documents. The `automation` field is
+# the trace link: it names the pytest node that executes the case, which
+# is how TestPilot reports coverage of the design rather than raw counts.
+
+meta:
+  module: auth
+  owner: QA
+  requirement_source: docs/test-plan.md
+
+cases:
+  - id: TC-AUTH-001
+    title: A valid credential pair returns a working bearer token
+    module: auth
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm the primary authentication path issues a token that is accepted by a protected endpoint.
+    preconditions:
+      - The seeded customer account casey@example.com exists and is active
+    steps:
+      - POST /api/auth/login with the seeded customer email and password
+      - Read access_token, token_type and expires_in from the response
+      - Call GET /api/auth/me using the returned token as a bearer credential
+    expected: >-
+      Login returns 200 with token_type "bearer" and a positive expires_in.
+      The token authenticates GET /api/auth/me, which returns 200 for the same
+      user. No credential material appears anywhere in the response body.
+    test_data:
+      email: casey@example.com
+    suites: [smoke, regression]
+    automation: tests/api/test_auth.py::test_login_with_seeded_customer_returns_a_usable_token
+    requirement: REQ-AUTH-01
+
+  - id: TC-AUTH-002
+    title: Registration creates an account that can immediately sign in
+    module: auth
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm self-registration persists the account and does not grant elevated privileges.
+    preconditions:
+      - The email address is not already registered
+    steps:
+      - POST /api/auth/register with a unique email, a compliant password and a full name
+      - Confirm the response status and the role on the returned user
+      - POST /api/auth/login with the same credentials from a fresh client
+    expected: >-
+      Registration returns 201 with role "customer". A subsequent login with the
+      same credentials returns 200. Self-registration never yields role "admin".
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_register_creates_an_account_that_can_immediately_sign_in
+    requirement: REQ-AUTH-02
+
+  - id: TC-AUTH-003
+    title: Email addresses are normalised to lowercase
+    module: auth
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm address casing cannot create a duplicate identity.
+    preconditions:
+      - The address is unused in any casing
+    steps:
+      - Register with the address in upper case
+      - Log in using the lower case form of the same address
+    expected: Login succeeds and the stored email is the lowercased form.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_email_is_normalised_to_lowercase_on_registration_and_login
+    requirement: REQ-AUTH-03
+
+  - id: TC-AUTH-010
+    title: Login with a wrong password is rejected
+    module: auth
+    layer: api
+    type: negative
+    priority: P1
+    objective: Confirm an incorrect password never authenticates.
+    preconditions:
+      - The account exists
+    steps:
+      - POST /api/auth/login with a valid email and an incorrect password
+    expected: The response is 401 and the body contains no access_token.
+    suites: [smoke, regression]
+    automation: tests/api/test_auth.py::test_login_with_a_wrong_password_is_rejected
+    requirement: REQ-AUTH-04
+
+  - id: TC-AUTH-011
+    title: Login responses do not reveal whether an email is registered
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm the login endpoint is not a user-enumeration oracle.
+    preconditions:
+      - One registered email and one unregistered email are available
+    steps:
+      - POST /api/auth/login with an unregistered email
+      - POST /api/auth/login with a registered email and a wrong password
+      - Compare the two status codes and the two detail messages
+    expected: >-
+      Both calls return 401 with an identical detail message. Any difference
+      lets an attacker discover which addresses hold accounts.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_login_error_does_not_reveal_whether_the_email_exists
+    requirement: REQ-SEC-01
+
+  - id: TC-AUTH-012
+    title: A deactivated account cannot sign in
+    module: auth
+    layer: api
+    type: negative
+    priority: P1
+    objective: Confirm deactivation is enforced at the login boundary.
+    preconditions:
+      - The seeded account dormant@example.com exists with is_active = 0
+    steps:
+      - POST /api/auth/login with the deactivated account's correct credentials
+    expected: The response is 403 and the message states the account is deactivated.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_deactivated_account_cannot_sign_in
+    requirement: REQ-AUTH-05
+
+  - id: TC-AUTH-013
+    title: Registration rejects malformed email addresses
+    module: auth
+    layer: api
+    type: negative
+    priority: P2
+    objective: Exercise every malformed address shape against the validator.
+    preconditions:
+      - None
+    steps:
+      - Register with an address missing the @ sign
+      - Repeat with a missing domain, missing local part, missing TLD, empty
+        string, whitespace only, an embedded space and a double @
+    expected: Every variant returns 422 and no user row is created.
+    test_data:
+      variants: 8
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_registration_rejects_malformed_email_addresses
+    requirement: REQ-AUTH-06
+
+  - id: TC-AUTH-014
+    title: Registration enforces the password policy
+    module: auth
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the documented 8-character, letter-and-digit policy at its edges.
+    preconditions:
+      - None
+    steps:
+      - Register with a 3-character password
+      - Register with a 7-character password (one below the minimum)
+      - Register with letters only, digits only and an empty password
+    expected: Every variant returns 422 with a message naming the policy.
+    test_data:
+      minimum_length: 8
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_registration_enforces_the_password_policy
+    requirement: REQ-AUTH-07
+
+  - id: TC-AUTH-015
+    title: Registering a duplicate email returns a conflict
+    module: auth
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm the second registration is refused rather than overwriting the first.
+    preconditions:
+      - An account already exists for the address
+    steps:
+      - Register an address successfully
+      - Register the same address a second time
+    expected: The second call returns 409 and the original account is unchanged.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_registering_a_duplicate_email_returns_conflict
+    requirement: REQ-AUTH-08
+
+  - id: TC-AUTH-016
+    title: Login is not vulnerable to SQL injection in the email field
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm credentials are bound as parameters, never concatenated into SQL.
+    preconditions:
+      - The users table contains data worth protecting
+    steps:
+      - Attempt login with "' OR '1'='1" as the email
+      - Repeat with a comment terminator, a stacked DROP TABLE and a UNION SELECT
+      - Log in normally afterwards to confirm the table still exists
+    expected: >-
+      Every payload returns 401 or 422 with no token issued, and a normal login
+      still succeeds afterwards, proving nothing was executed as SQL.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_login_is_not_vulnerable_to_sql_injection_in_the_email_field
+    requirement: REQ-SEC-02
+
+  - id: TC-AUTH-020
+    title: Protected endpoints reject anonymous requests
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm GET /api/auth/me is not reachable without credentials.
+    preconditions:
+      - No Authorization header is sent
+    steps:
+      - GET /api/auth/me with no Authorization header
+    expected: The response is 401.
+    suites: [smoke, regression]
+    automation: tests/api/test_auth.py::test_protected_endpoint_rejects_a_request_with_no_credentials
+    requirement: REQ-SEC-03
+
+  - id: TC-AUTH-021
+    title: Malformed bearer tokens are rejected
+    module: auth
+    layer: api
+    type: negative
+    priority: P1
+    objective: Confirm the token parser fails closed on every malformed shape.
+    preconditions:
+      - None
+    steps:
+      - Send an empty token, a non-JWT string, a Basic scheme header,
+        a two-segment JWT and a JWT with a corrupt signature
+    expected: Every variant returns 401.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_malformed_tokens_are_rejected
+    requirement: REQ-SEC-04
+
+  - id: TC-AUTH-022
+    title: A token signed with the wrong secret is rejected
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm signature verification is performed and cannot be bypassed.
+    preconditions:
+      - None
+    steps:
+      - Mint a structurally valid JWT claiming role "admin", signed with an
+        attacker-chosen secret
+      - Call GET /api/auth/me with that token
+    expected: The response is 401. A forged signature must never authenticate.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_a_token_signed_with_the_wrong_secret_is_rejected
+    requirement: REQ-SEC-05
+
+  - id: TC-AUTH-023
+    title: An expired token is rejected
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm the exp claim is verified, limiting the lifetime of a leaked token.
+    preconditions:
+      - The server's signing secret is known to the test so that expiry is the
+        only reason for rejection
+    steps:
+      - Mint a token with the correct secret and an exp one hour in the past
+      - Call GET /api/auth/me with that token
+    expected: The response is 401.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_an_expired_token_is_rejected
+    requirement: REQ-SEC-06
+
+  - id: TC-AUTH-024
+    title: An Authorization header without the Bearer scheme is rejected
+    module: auth
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm the scheme is part of the contract.
+    preconditions:
+      - A valid token has been issued
+    steps:
+      - Send the raw token as the Authorization header with no "Bearer " prefix
+    expected: The response is 401.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_authorization_header_without_the_bearer_scheme_is_rejected
+    requirement: REQ-SEC-07
+
+  - id: TC-AUTH-030
+    title: A customer cannot create products
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm role-based authorisation on a write endpoint.
+    preconditions:
+      - A customer session is authenticated
+    steps:
+      - POST /api/products with a valid product payload as a customer
+    expected: The response is 403 and the message states an administrator role is required.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_a_customer_cannot_create_products
+    requirement: REQ-SEC-08
+
+  - id: TC-AUTH-031
+    title: An administrator can create products
+    module: auth
+    layer: api
+    type: functional
+    priority: P2
+    objective: The positive half of the same authorisation rule.
+    preconditions:
+      - An admin session is authenticated
+    steps:
+      - POST /api/products with a valid, unique product payload as an admin
+    expected: The response is 201 and the created product carries the requested SKU.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_an_admin_can_create_products
+    requirement: REQ-SEC-08
+
+  - id: TC-AUTH-032
+    title: A customer cannot read another customer's order
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm object-level authorisation prevents an insecure direct object reference.
+    preconditions:
+      - Two distinct customer accounts exist
+    steps:
+      - Customer A places an order and notes its id
+      - Customer B calls GET /api/orders/{id} for customer A's order
+    expected: >-
+      The response is 404. Returning 403 would confirm the record exists;
+      returning the order would be a data breach.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_a_customer_cannot_read_another_customers_order
+    requirement: REQ-SEC-09
+
+  - id: TC-AUTH-033
+    title: Order history is scoped to the calling customer
+    module: auth
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm the list endpoint is tenant-filtered.
+    preconditions:
+      - Two distinct customer accounts exist and customer A has an order
+    steps:
+      - Customer A places an order
+      - Customer B calls GET /api/orders
+    expected: Customer B's history contains none of customer A's order numbers.
+    suites: [regression]
+    automation: tests/api/test_auth.py::test_order_history_is_scoped_to_the_calling_customer
+    requirement: REQ-SEC-09
+
+  - id: TC-AUTH-040
+    title: A password reset link expires after a single use
+    module: auth
+    layer: api
+    type: security
+    priority: P2
+    objective: Confirm reset tokens are single-use once the feature ships.
+    preconditions:
+      - Password reset is implemented (not yet in build 1.4.0)
+    steps:
+      - Request a password reset for a known account
+      - Consume the emailed token to set a new password
+      - Attempt to consume the same token a second time
+    expected: The second attempt is refused. Tracked as manual until the feature exists.
+    suites: [manual]
+    automation: null
+    requirement: REQ-AUTH-09

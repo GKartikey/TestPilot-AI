@@ -1,0 +1,392 @@
+# SQL validation: schema contract, referential integrity and reconciliation.
+#
+# These cases answer a question the API cannot: not "what did the service
+# say" but "what did it actually store".
+
+meta:
+  module: data
+  owner: QA
+  requirement_source: docs/test-plan.md
+
+cases:
+  - id: TC-SQL-001
+    title: Every expected table exists
+    module: data
+    layer: db
+    type: smoke
+    priority: P1
+    objective: Confirm the schema deployed is the schema designed.
+    preconditions:
+      - The database has been migrated
+    steps:
+      - List the user tables in the database
+      - Compare against the expected set
+    expected: users, products, carts, cart_items, coupons, orders and order_items are all present.
+    suites: [smoke, regression]
+    automation: tests/db/test_sql_validation.py::test_every_expected_table_exists
+    requirement: REQ-DATA-01
+
+  - id: TC-SQL-002
+    title: Required columns are present on every core table
+    module: data
+    layer: db
+    type: functional
+    priority: P2
+    objective: Confirm the column-level contract the application depends on.
+    preconditions:
+      - The schema is deployed
+    steps:
+      - Read the column list for users, products, orders and order_items
+      - Assert each required column is present
+    expected: Every column the application reads or writes exists.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_required_columns_are_present
+    requirement: REQ-DATA-01
+
+  - id: TC-SQL-003
+    title: Money and quantity columns are stored as integers
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: >-
+      Confirm money is held in integer cents. A drift to a floating-point
+      column accumulates rounding error that is expensive to reconcile later.
+    preconditions:
+      - The schema is deployed
+    steps:
+      - Read the declared type of every monetary and quantity column
+    expected: Every such column is declared INTEGER.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_money_and_quantity_columns_are_integers
+    requirement: REQ-DATA-02
+
+  - id: TC-SQL-004
+    title: Foreign keys are declared between related tables
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm referential integrity is enforced by the database itself.
+    preconditions:
+      - The schema is deployed
+    steps:
+      - Read the foreign key list for cart_items, order_items, orders and carts
+    expected: Each table references the parents it depends on.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_foreign_keys_are_declared_between_related_tables
+    requirement: REQ-DATA-03
+
+  - id: TC-SQL-005
+    title: Lookup columns are indexed
+    module: data
+    layer: db
+    type: data
+    priority: P3
+    objective: Confirm the columns filtered on every request carry an index.
+    preconditions:
+      - The schema is deployed
+    steps:
+      - Read the index list for products and orders
+    expected: products.category and orders.user_id are indexed.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_lookup_columns_are_indexed
+    requirement: REQ-DATA-04
+
+  - id: TC-SQL-006
+    title: The database rejects a negative price
+    module: data
+    layer: db
+    type: negative
+    priority: P2
+    objective: Confirm the CHECK constraint is real rather than documentation.
+    preconditions:
+      - The schema is deployed
+    steps:
+      - Attempt to insert a product with price_cents of -100
+    expected: The insert raises an integrity error.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_the_database_rejects_a_negative_price
+    requirement: REQ-DATA-05
+
+  - id: TC-SQL-007
+    title: The database rejects a duplicate SKU
+    module: data
+    layer: db
+    type: negative
+    priority: P2
+    objective: Confirm uniqueness is enforced at the storage layer, not only in application code.
+    preconditions:
+      - A product with a known SKU exists
+    steps:
+      - Attempt to insert a second product with the same SKU
+    expected: The insert raises an integrity error.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_the_database_rejects_a_duplicate_sku
+    requirement: REQ-DATA-05
+
+  - id: TC-SQL-008
+    title: The database rejects an invalid order status
+    module: data
+    layer: db
+    type: negative
+    priority: P2
+    objective: Confirm order status is a closed set guarded by a CHECK constraint.
+    preconditions:
+      - A user row exists
+    steps:
+      - Attempt to insert an order with a status outside the documented set
+    expected: The insert raises an integrity error.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_the_database_rejects_an_invalid_order_status
+    requirement: REQ-DATA-05
+
+  - id: TC-SQL-009
+    title: A cart item cannot reference a product that does not exist
+    module: data
+    layer: db
+    type: negative
+    priority: P2
+    objective: Confirm foreign keys are enforced at runtime, not merely declared.
+    preconditions:
+      - A cart row exists
+    steps:
+      - Attempt to insert a cart item pointing at product id 999999
+    expected: The insert raises an integrity error.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_a_cart_item_cannot_reference_a_product_that_does_not_exist
+    requirement: REQ-DATA-03
+
+  - id: TC-SQL-020
+    title: There are no foreign key violations anywhere in the database
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm nothing in the database points at a row that no longer exists.
+    preconditions:
+      - The suite has exercised the application
+    steps:
+      - Run a full foreign key check across the database
+    expected: The check reports no violations.
+    suites: [smoke, regression]
+    automation: tests/db/test_sql_validation.py::test_there_are_no_foreign_key_violations
+    requirement: REQ-DATA-03
+
+  - id: TC-SQL-021
+    title: No order item is orphaned
+    module: data
+    layer: db
+    type: data
+    priority: P2
+    objective: Confirm every line belongs to an order that exists.
+    preconditions:
+      - Orders have been placed
+    steps:
+      - Left join order_items to orders and select rows with no parent
+    expected: The query returns no rows.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_no_order_item_is_orphaned
+    requirement: REQ-DATA-03
+
+  - id: TC-SQL-022
+    title: No product has negative stock
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm stock can reach zero but never go below it.
+    preconditions:
+      - Orders and cancellations have been exercised
+    steps:
+      - Select products with stock below zero
+    expected: The query returns no rows.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_no_product_has_negative_stock
+    requirement: REQ-DATA-06
+
+  - id: TC-SQL-023
+    title: No two users share an email address
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm account identity is unique, case-insensitively.
+    preconditions:
+      - Registrations have been exercised
+    steps:
+      - Group users by lowercased email and select groups larger than one
+    expected: The query returns no rows.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_no_two_users_share_an_email_address
+    requirement: REQ-DATA-07
+
+  - id: TC-SQL-024
+    title: No password is stored in a recoverable form
+    module: data
+    layer: db
+    type: security
+    priority: P1
+    objective: >-
+      The single most important row-level check in the schema. A plaintext or
+      unsalted credential is a breach waiting to be disclosed.
+    preconditions:
+      - User accounts exist
+    steps:
+      - Select any user row whose password_hash is not a PBKDF2 hash
+    expected: The query returns no rows.
+    suites: [smoke, regression]
+    automation: tests/db/test_sql_validation.py::test_no_password_is_stored_in_a_recoverable_form
+    requirement: REQ-SEC-11
+
+  - id: TC-SQL-025
+    title: Password hashes are uniquely salted
+    module: data
+    layer: db
+    type: security
+    priority: P1
+    objective: Confirm two identical passwords do not produce one hash.
+    preconditions:
+      - Several user accounts exist
+    steps:
+      - Compare the count of users with the count of distinct password hashes
+    expected: The two counts are equal.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_password_hashes_are_uniquely_salted
+    requirement: REQ-SEC-11
+
+  - id: TC-SQL-030
+    title: Every order line total equals quantity times unit price
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Verify line arithmetic in SQL across every stored row.
+    preconditions:
+      - Orders exist
+    steps:
+      - Select order lines where line_total_cents differs from quantity times unit_price_cents
+    expected: The query returns no rows.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_every_order_line_total_equals_quantity_times_unit_price
+    requirement: REQ-PRICE-01
+
+  - id: TC-SQL-031
+    title: Every order subtotal equals the sum of its lines
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm the order header agrees with its line items.
+    preconditions:
+      - A multi-line order has been placed
+    steps:
+      - Group order_items by order and compare the sum with the stored subtotal
+    expected: The query returns no mismatched orders.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_every_order_subtotal_equals_the_sum_of_its_lines
+    requirement: REQ-PRICE-01
+
+  - id: TC-SQL-032
+    title: Every order total is internally consistent
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm subtotal minus discount plus shipping plus tax equals the stored total, for all rows.
+    preconditions:
+      - A discounted order has been placed
+    steps:
+      - Select orders where the components do not sum to the total
+    expected: The query returns no rows.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_every_order_total_is_internally_consistent
+    requirement: REQ-PRICE-01
+
+  - id: TC-SQL-033
+    title: A placed order is written with the expected row shape
+    module: data
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm the API response and the stored row describe the same order.
+    preconditions:
+      - An order has just been placed through the API
+    steps:
+      - Place an order and capture the response
+      - Read the corresponding row by order number
+      - Compare each monetary field
+    expected: Every monetary field matches and the status is PLACED.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_a_placed_order_is_written_with_the_expected_row_shape
+    requirement: REQ-ORD-05
+
+  - id: TC-SQL-034
+    title: A cancelled order keeps its line items for audit
+    module: data
+    layer: db
+    type: data
+    priority: P2
+    objective: Confirm cancellation changes status without destroying history.
+    preconditions:
+      - An order has been cancelled
+    steps:
+      - Cancel an order
+      - Read its status and its line items
+    expected: The status is CANCELLED and the line items are still present.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_a_cancelled_order_keeps_its_line_items_for_audit
+    requirement: REQ-ORD-11
+
+  - id: TC-SQL-035
+    title: Revenue by category reconciles with the order items
+    module: data
+    layer: db
+    type: data
+    priority: P2
+    objective: >-
+      Confirm a real multi-table reporting join returns coherent numbers.
+      Aggregates are where a silently wrong JOIN first shows up.
+    preconditions:
+      - Orders exist across more than one category
+    steps:
+      - Run the revenue-by-category report
+      - Sum its gross column and compare with the raw sum of non-cancelled lines
+    expected: The two totals are equal.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_revenue_by_category_reconciles_with_the_order_items
+    requirement: REQ-DATA-08
+
+  - id: TC-SQL-036
+    title: Cart contents are reachable through the full join path
+    module: data
+    layer: db
+    type: data
+    priority: P3
+    objective: Confirm users, carts, cart_items and products all connect.
+    preconditions:
+      - A customer has items in their cart
+    steps:
+      - Join the four tables filtering by the customer's email
+    expected: The join returns exactly the expected line with the correct SKU and quantity.
+    suites: [regression]
+    automation: tests/db/test_sql_validation.py::test_cart_contents_are_reachable_through_the_full_join_path
+    requirement: REQ-DATA-08
+
+  - id: TC-SQL-040
+    title: A schema migration is reversible on a populated database
+    module: data
+    layer: db
+    type: data
+    priority: P2
+    objective: Confirm a migration can be rolled back without data loss.
+    preconditions:
+      - A migration tool is adopted (not yet in build 1.4.0)
+    steps:
+      - Take a snapshot of a populated database
+      - Apply the migration, then roll it back
+      - Compare row counts and checksums with the snapshot
+    expected: The rolled-back database is identical to the snapshot. Manual until migrations are introduced.
+    suites: [manual]
+    automation: null
+    requirement: REQ-DATA-09

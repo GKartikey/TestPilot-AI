@@ -1,0 +1,57 @@
+# Environment configuration for TestPilot.
+#
+# Select with TESTPILOT_ENV=<name>. Any single value can be overridden at
+# run time with TESTPILOT_<KEY>, e.g. TESTPILOT_BASE_URL=http://staging.
+# Credentials here are seeded demo accounts for a local sample app; real
+# environments must supply them through the process environment instead.
+
+environments:
+  local:
+    base_url: http://127.0.0.1:8077
+    db_path: artifacts/shopnest.db
+    admin_email: admin@shopnest.io
+    admin_password: AdminPass123
+    user_email: casey@example.com
+    user_password: Custom3rPass
+    headless: true
+    slow_mo_ms: 0
+    default_timeout_ms: 10000
+    fault_profile: none
+
+  headed:
+    base_url: http://127.0.0.1:8077
+    db_path: artifacts/shopnest.db
+    admin_email: admin@shopnest.io
+    admin_password: AdminPass123
+    user_email: casey@example.com
+    user_password: Custom3rPass
+    headless: false
+    slow_mo_ms: 250
+    default_timeout_ms: 15000
+    fault_profile: none
+
+  ci:
+    base_url: http://127.0.0.1:8077
+    db_path: artifacts/shopnest.db
+    admin_email: admin@shopnest.io
+    admin_password: AdminPass123
+    user_email: casey@example.com
+    user_password: Custom3rPass
+    headless: true
+    slow_mo_ms: 0
+    default_timeout_ms: 20000
+    fault_profile: none
+
+  # A deliberately broken build. Used to prove the platform actually
+  # catches regressions and to demonstrate evidence-gated bug reporting.
+  faulty:
+    base_url: http://127.0.0.1:8078
+    db_path: artifacts/shopnest-faulty.db
+    admin_email: admin@shopnest.io
+    admin_password: AdminPass123
+    user_email: casey@example.com
+    user_password: Custom3rPass
+    headless: true
+    slow_mo_ms: 0
+    default_timeout_ms: 10000
+    fault_profile: all

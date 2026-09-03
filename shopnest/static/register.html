@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create account - ShopNest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">ShopNest</span>
+  <nav>
+    <a href="/products" data-testid="nav-products">Products</a>
+    <a href="/cart" data-testid="nav-cart">Cart (<span data-testid="cart-count">0</span>)</a>
+    <a href="/orders" data-testid="nav-orders">Orders</a>
+  </nav>
+  <span class="spacer"></span>
+  <span data-testid="nav-session"></span>
+</header>
+
+<main>
+  <h1 data-testid="page-title">Create your account</h1>
+  <p class="lede">Passwords need at least 8 characters, one letter and one digit.</p>
+
+  <div class="card" style="max-width:420px">
+    <div class="alert error" data-testid="flash" hidden></div>
+    <form data-testid="register-form" novalidate>
+      <label for="full_name">Full name</label>
+      <input id="full_name" name="full_name" data-testid="name-input">
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" data-testid="email-input">
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" data-testid="password-input">
+
+      <div style="margin-top:18px" class="row">
+        <button type="submit" data-testid="register-submit">Create account</button>
+        <a href="/login" data-testid="login-link" class="muted">I already have one</a>
+      </div>
+    </form>
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+  document.querySelector("[data-testid='register-form']").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    clearFlash();
+    const submit = document.querySelector("[data-testid='register-submit']");
+    submit.disabled = true;
+    try {
+      const payload = {
+        full_name: document.querySelector("[data-testid='name-input']").value,
+        email: document.querySelector("[data-testid='email-input']").value,
+        password: document.querySelector("[data-testid='password-input']").value,
+      };
+      const result = await api("/api/auth/register", { method: "POST", body: JSON.stringify(payload) });
+      Session.save(result.access_token, result.user);
+      window.location.href = "/products";
+    } catch (error) {
+      flash(error.message, "error");
+      submit.disabled = false;
+    }
+  });
+
+  markReady("register");
+</script>
+</body>
+</html>

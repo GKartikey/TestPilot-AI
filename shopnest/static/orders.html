@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orders - ShopNest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">ShopNest</span>
+  <nav>
+    <a href="/products" data-testid="nav-products">Products</a>
+    <a href="/cart" data-testid="nav-cart">Cart (<span data-testid="cart-count">0</span>)</a>
+    <a href="/orders" data-testid="nav-orders">Orders</a>
+  </nav>
+  <span class="spacer"></span>
+  <span data-testid="nav-session"></span>
+</header>
+
+<main>
+  <h1 data-testid="page-title">Order history</h1>
+  <p class="lede">Every order you have placed with ShopNest.</p>
+
+  <div class="alert success" data-testid="order-confirmation" hidden></div>
+  <div class="alert error" data-testid="flash" hidden></div>
+
+  <div data-testid="order-list"></div>
+  <p class="empty" data-testid="empty-orders" hidden>You have not placed any orders yet.</p>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+  const list = document.querySelector("[data-testid='order-list']");
+
+  function orderCard(order) {
+    const node = document.createElement("div");
+    node.className = "card";
+    node.style.marginBottom = "12px";
+    node.setAttribute("data-testid", "order-card");
+    node.setAttribute("data-order-number", order.order_number);
+
+    const lines = order.items
+      .map(
+        (item) => `<tr>
+            <td>${item.name}<div class="sku">${item.sku}</div></td>
+            <td class="num">${item.quantity}</td>
+            <td class="num">${money(item.unit_price_cents)}</td>
+            <td class="num">${money(item.line_total_cents)}</td>
+          </tr>`
+      )
+      .join("");
+
+    node.innerHTML = `
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <strong data-testid="order-number">${order.order_number}</strong>
+          <span class="muted"> placed ${order.created_at}</span>
+        </div>
+        <span data-testid="order-status">${order.status}</span>
+      </div>
+      <table style="margin-top:10px">
+        <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Line</th></tr></thead>
+        <tbody>${lines}</tbody>
+      </table>
+      <div class="totals">
+        <div><span>Subtotal</span><span data-testid="order-subtotal">${money(order.subtotal_cents)}</span></div>
+        <div><span>Discount</span><span data-testid="order-discount">-${money(order.discount_cents)}</span></div>
+        <div><span>Shipping</span><span data-testid="order-shipping">${money(order.shipping_cents)}</span></div>
+        <div><span>Tax</span><span data-testid="order-tax">${money(order.tax_cents)}</span></div>
+        <div class="grand"><span>Total</span><span data-testid="order-total">${money(order.total_cents)}</span></div>
+      </div>`;
+    return node;
+  }
+
+  async function load() {
+    if (!requireLogin()) return;
+    const placed = new URLSearchParams(window.location.search).get("placed");
+    if (placed) {
+      const banner = document.querySelector("[data-testid='order-confirmation']");
+      banner.hidden = false;
+      banner.textContent = `Thank you! Order ${placed} has been placed.`;
+    }
+    try {
+      const orders = await api("/api/orders");
+      list.innerHTML = "";
+      orders.forEach((order) => list.appendChild(orderCard(order)));
+      document.querySelector("[data-testid='empty-orders']").hidden = orders.length > 0;
+    } catch (error) {
+      flash(error.message, "error");
+    }
+    markReady("orders");
+  }
+
+  load();
+</script>
+</body>
+</html>

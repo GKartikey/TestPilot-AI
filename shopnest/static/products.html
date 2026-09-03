@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Products - ShopNest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">ShopNest</span>
+  <nav>
+    <a href="/products" data-testid="nav-products">Products</a>
+    <a href="/cart" data-testid="nav-cart">Cart (<span data-testid="cart-count">0</span>)</a>
+    <a href="/orders" data-testid="nav-orders">Orders</a>
+  </nav>
+  <span class="spacer"></span>
+  <span data-testid="nav-session"></span>
+</header>
+
+<main>
+  <h1 data-testid="page-title">Catalogue</h1>
+  <p class="lede">Search the shelf, then add what you need to the cart.</p>
+
+  <div class="alert error" data-testid="flash" hidden></div>
+
+  <div class="card" style="margin-bottom:16px">
+    <form class="row" data-testid="search-form">
+      <div style="flex:2">
+        <label for="q">Search</label>
+        <input id="q" data-testid="search-input" placeholder="Keyboard, SN-MOUS-002, ...">
+      </div>
+      <div style="flex:1">
+        <label for="category">Category</label>
+        <select id="category" data-testid="category-select"><option value="">All categories</option></select>
+      </div>
+      <div style="flex:1">
+        <label for="sort">Sort by</label>
+        <select id="sort" data-testid="sort-select">
+          <option value="name">Name</option>
+          <option value="price">Price</option>
+          <option value="newest">Newest</option>
+        </select>
+      </div>
+      <button type="submit" data-testid="search-submit">Search</button>
+    </form>
+  </div>
+
+  <p class="muted" data-testid="result-count"></p>
+  <div class="grid" data-testid="product-grid"></div>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+  const grid = document.querySelector("[data-testid='product-grid']");
+
+  function card(product) {
+    const node = document.createElement("div");
+    node.className = "card product";
+    node.setAttribute("data-testid", "product-card");
+    node.setAttribute("data-sku", product.sku);
+    node.setAttribute("data-product-id", String(product.id));
+    node.innerHTML = `
+      <h3 data-testid="product-name">${product.name}</h3>
+      <div class="sku" data-testid="product-sku">${product.sku}</div>
+      <div class="price" data-testid="product-price">$${product.price.toFixed(2)}</div>
+      <div class="stock ${product.in_stock ? "" : "out"}" data-testid="product-stock">
+        ${product.in_stock ? product.stock + " in stock" : "Out of stock"}
+      </div>
+      <div style="margin-top:10px">
+        <button data-testid="add-to-cart" ${product.in_stock ? "" : "disabled"}>Add to cart</button>
+      </div>`;
+    node.querySelector("[data-testid='add-to-cart']").addEventListener("click", async () => {
+      clearFlash();
+      if (!requireLogin()) return;
+      try {
+        await api("/api/cart/items", {
+          method: "POST",
+          body: JSON.stringify({ product_id: product.id, quantity: 1 }),
+        });
+        await refreshCartCount();
+        flash(`${product.name} added to your cart.`, "success");
+      } catch (error) {
+        flash(error.message, "error");
+      }
+    });
+    return node;
+  }
+
+  async function loadCategories() {
+    const select = document.querySelector("[data-testid='category-select']");
+    for (const name of await api("/api/products/categories")) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    }
+  }
+
+  async function search() {
+    document.body.setAttribute("data-ready", "false");
+    const params = new URLSearchParams({
+      sort: document.querySelector("[data-testid='sort-select']").value,
+      page_size: "50",
+    });
+    const q = document.querySelector("[data-testid='search-input']").value.trim();
+    const category = document.querySelector("[data-testid='category-select']").value;
+    if (q) params.set("q", q);
+    if (category) params.set("category", category);
+
+    grid.innerHTML = "";
+    try {
+      const page = await api(`/api/products?${params.toString()}`);
+      document.querySelector("[data-testid='result-count']").textContent =
+        `${page.total} product${page.total === 1 ? "" : "s"} found`;
+      if (page.total === 0) {
+        grid.innerHTML = `<p class="empty" data-testid="no-results">No products match that search.</p>`;
+      } else {
+        page.items.forEach((product) => grid.appendChild(card(product)));
+      }
+    } catch (error) {
+      flash(error.message, "error");
+    }
+    markReady("products");
+  }
+
+  document.querySelector("[data-testid='search-form']").addEventListener("submit", (event) => {
+    event.preventDefault();
+    search();
+  });
+
+  loadCategories().then(search);
+</script>
+</body>
+</html>

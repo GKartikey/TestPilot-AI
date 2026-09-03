@@ -1,0 +1,483 @@
+# Cart and pricing: quantity rules, stock limits, coupons, money maths.
+#
+# The pricing cases are the commercially highest-risk in the suite: every
+# expected value here is computed from the documented rule, independently
+# of the application's own arithmetic.
+
+meta:
+  module: cart
+  owner: QA
+  requirement_source: docs/test-plan.md
+
+cases:
+  - id: TC-CART-001
+    title: A product can be added to the cart
+    module: cart
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm the core add-to-cart path.
+    preconditions:
+      - An authenticated customer with an empty cart
+    steps:
+      - POST /api/cart/items with a valid product id and quantity 2
+    expected: >-
+      The response is 201 with a single line for that SKU, quantity 2, and a
+      line total equal to unit price multiplied by 2.
+    suites: [smoke, regression]
+    automation: tests/api/test_cart.py::test_a_product_can_be_added_to_the_cart
+    requirement: REQ-CART-01
+
+  - id: TC-CART-002
+    title: Adding the same product twice accumulates the quantity
+    module: cart
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm a second add merges into the existing line.
+    preconditions:
+      - An authenticated customer with an empty cart
+    steps:
+      - Add 2 units of a product
+      - Add 3 more units of the same product
+    expected: The cart holds one line for that product with quantity 5.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_adding_the_same_product_twice_accumulates_the_quantity
+    requirement: REQ-CART-02
+
+  - id: TC-CART-003
+    title: Cart quantity can be updated and the line total follows
+    module: cart
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm PATCH replaces the quantity and recomputes the line.
+    preconditions:
+      - The product is already in the cart
+    steps:
+      - Add 2 units, then PATCH the line to quantity 7
+    expected: The line reports quantity 7 and a line total of unit price multiplied by 7.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_cart_quantity_can_be_updated_and_the_line_total_follows
+    requirement: REQ-CART-03
+
+  - id: TC-CART-004
+    title: Setting a quantity of zero removes the line
+    module: cart
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm zero is treated as removal, as documented, rather than as invalid.
+    preconditions:
+      - The product is already in the cart
+    steps:
+      - Add 3 units, then PATCH the line to quantity 0
+    expected: The response is 200 and the cart is empty.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_setting_a_quantity_of_zero_removes_the_line
+    requirement: REQ-CART-03
+
+  - id: TC-CART-005
+    title: A product can be removed from the cart
+    module: cart
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm removal takes out one line and leaves the others intact.
+    preconditions:
+      - Two different products are in the cart
+    steps:
+      - Add two different products
+      - DELETE one of them
+    expected: The remaining cart holds only the other product.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_a_product_can_be_removed_from_the_cart
+    requirement: REQ-CART-04
+
+  - id: TC-CART-006
+    title: Carts are isolated between customers
+    module: cart
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm one customer's basket never leaks into another's.
+    preconditions:
+      - Two distinct customer accounts exist
+    steps:
+      - Customer A adds 4 units of a product
+      - Customer B reads their own cart
+    expected: Customer B's cart is empty.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_carts_are_isolated_between_customers
+    requirement: REQ-SEC-09
+
+  - id: TC-CART-010
+    title: The cart requires authentication
+    module: cart
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm no cart endpoint is anonymous.
+    preconditions:
+      - No Authorization header is sent
+    steps:
+      - GET /api/cart with no token
+      - POST /api/cart/items with no token
+    expected: Both calls return 401.
+    suites: [smoke, regression]
+    automation: tests/api/test_cart.py::test_the_cart_requires_authentication
+    requirement: REQ-SEC-03
+
+  - id: TC-CART-011
+    title: Adding a product that does not exist returns not found
+    module: cart
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm an unknown product id cannot enter a cart.
+    preconditions:
+      - An authenticated customer with an empty cart
+    steps:
+      - POST /api/cart/items with product id 999999
+      - Read the cart back
+    expected: The add returns 404 and the cart remains empty.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_adding_a_product_that_does_not_exist_returns_not_found
+    requirement: REQ-CART-05
+
+  - id: TC-CART-012
+    title: Updating a product that is not in the cart returns not found
+    module: cart
+    layer: api
+    type: negative
+    priority: P3
+    objective: Confirm PATCH on an absent line does not silently insert it.
+    preconditions:
+      - The cart is empty
+    steps:
+      - PATCH a cart line for a product that was never added
+    expected: The response is 404.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_updating_a_product_that_is_not_in_the_cart_returns_not_found
+    requirement: REQ-CART-05
+
+  - id: TC-CART-013
+    title: Removing a product that is not in the cart returns not found
+    module: cart
+    layer: api
+    type: negative
+    priority: P3
+    objective: Confirm the documented non-idempotent DELETE behaviour.
+    preconditions:
+      - The cart is empty
+    steps:
+      - DELETE a cart line for a product that was never added
+    expected: The response is 404.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_removing_a_product_that_is_not_in_the_cart_returns_not_found
+    requirement: REQ-CART-05
+
+  - id: TC-CART-020
+    title: Cart quantity boundaries are enforced
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Cover the full equivalence-partition table for a field documented as 1..10 inclusive.
+    preconditions:
+      - An authenticated customer with an empty cart and a well-stocked product
+    steps:
+      - Attempt quantity 0 and -1 (below the minimum)
+      - Attempt quantity 1 and 2 (at and just inside the minimum)
+      - Attempt quantity 5 (mid range)
+      - Attempt quantity 9 and 10 (just inside and at the maximum)
+      - Attempt quantity 11 and 9999 (above the maximum)
+    expected: >-
+      Quantities 1 through 10 are accepted with 201 and stored exactly.
+      Everything outside that range returns 422 and leaves the cart empty.
+    test_data:
+      minimum: 1
+      maximum: 10
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_cart_quantity_boundaries
+    requirement: REQ-CART-06
+
+  - id: TC-CART-021
+    title: Accumulating past the maximum quantity is rejected
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the cap applies to the line total rather than to a single request.
+    preconditions:
+      - An authenticated customer with an empty cart
+    steps:
+      - Add 6 units (accepted)
+      - Add 6 more units, which would total 12
+      - Read the cart back
+    expected: The second add returns 422 and the line remains at quantity 6.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_accumulating_past_the_maximum_quantity_is_rejected
+    requirement: REQ-CART-06
+
+  - id: TC-CART-022
+    title: Ordering exactly the remaining stock is allowed
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm availability is inclusive at its boundary.
+    preconditions:
+      - A product's stock is set to exactly 4 for the duration of the test
+    steps:
+      - Add 4 units of that product
+    expected: The response is 201.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_ordering_exactly_the_remaining_stock_is_allowed
+    requirement: REQ-CART-07
+
+  - id: TC-CART-023
+    title: Ordering one more than the remaining stock is rejected
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the oversell case one unit past the boundary is refused.
+    preconditions:
+      - A product's stock is set to exactly 4 for the duration of the test
+    steps:
+      - Add 5 units of that product
+    expected: The response is 409 and the message names the remaining stock.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_ordering_one_more_than_the_remaining_stock_is_rejected
+    requirement: REQ-CART-07
+
+  - id: TC-CART-024
+    title: An out-of-stock product cannot be added
+    module: cart
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm the degenerate case of the availability rule.
+    preconditions:
+      - A seeded product has zero stock
+    steps:
+      - Add 1 unit of the zero-stock product
+    expected: The response is 409.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_an_out_of_stock_product_cannot_be_added
+    requirement: REQ-CART-07
+
+  - id: TC-CART-030
+    title: Cart totals match the documented pricing rules
+    module: cart
+    layer: api
+    type: functional
+    priority: P1
+    objective: Verify subtotal, shipping and tax against an independent oracle.
+    preconditions:
+      - An authenticated customer with an empty cart
+    steps:
+      - Build a two-line cart
+      - Compare every total against values computed from the documented rules
+    expected: >-
+      Subtotal equals the sum of the lines, shipping follows the free-shipping
+      rule, tax is 8% of the discounted subtotal and the total is the sum of all
+      four components.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_cart_totals_match_the_documented_pricing_rules
+    requirement: REQ-PRICE-01
+
+  - id: TC-CART-031
+    title: Shipping is free at exactly the free-shipping threshold
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the free-shipping rule is inclusive, as documented.
+    preconditions:
+      - A product priced at exactly the threshold is available
+    steps:
+      - Build a cart with a subtotal of exactly 5000 cents
+      - Read the shipping component
+    expected: Shipping is 0 cents.
+    test_data:
+      threshold_cents: 5000
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_shipping_is_free_at_exactly_the_threshold
+    requirement: REQ-PRICE-02
+
+  - id: TC-CART-032
+    title: Shipping is charged one cent below the threshold
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the exclusive side of the free-shipping boundary.
+    preconditions:
+      - A product priced one cent below the threshold is available
+    steps:
+      - Build a cart with a subtotal of exactly 4999 cents
+      - Read the shipping component
+    expected: Shipping is the flat rate of 499 cents.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_shipping_is_charged_one_cent_below_the_threshold
+    requirement: REQ-PRICE-02
+
+  - id: TC-CART-033
+    title: An empty cart has zero totals and no shipping
+    module: cart
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm the empty state does not attract a shipping charge.
+    preconditions:
+      - The cart is empty
+    steps:
+      - GET /api/cart
+    expected: Every total component is zero.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_an_empty_cart_has_zero_totals_and_no_shipping
+    requirement: REQ-PRICE-03
+
+  - id: TC-CART-040
+    title: A percentage coupon discounts the cart once
+    module: cart
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm the discount applies to the subtotal exactly once.
+    preconditions:
+      - An active 10% coupon with no minimum spend exists
+    steps:
+      - Build a cart with 2 units of one product
+      - Apply the coupon
+      - Compare the discount with 10% of the subtotal computed independently
+    expected: The discount equals 10% of the subtotal, and every other total follows from it.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_a_percentage_coupon_discounts_the_cart_once
+    requirement: REQ-PRICE-04
+
+  - id: TC-CART-041
+    title: A coupon discounts a multi-line cart only once
+    module: cart
+    layer: api
+    type: functional
+    priority: P1
+    objective: >-
+      Detect per-line discount stacking. A cart with more than one line is the
+      shape in which applying the percentage per line is visible.
+    preconditions:
+      - An active 10% coupon exists
+    steps:
+      - Build a cart with two different products
+      - Apply the coupon
+      - Compare the discount with 10% of the whole subtotal
+    expected: >-
+      The discount equals 10% of the combined subtotal. A larger discount means
+      the percentage is being applied per line and then summed.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_a_coupon_discounts_a_multi_line_cart_only_once
+    requirement: REQ-PRICE-04
+
+  - id: TC-CART-042
+    title: An unknown coupon code is rejected
+    module: cart
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm invented codes discount nothing.
+    preconditions:
+      - The cart holds at least one item
+    steps:
+      - Apply a coupon code that does not exist
+      - Read the cart totals back
+    expected: The response is 404 and the discount remains zero.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_an_unknown_coupon_code_is_rejected
+    requirement: REQ-PRICE-05
+
+  - id: TC-CART-043
+    title: An inactive coupon is rejected
+    module: cart
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm deactivated codes stop working immediately.
+    preconditions:
+      - A coupon exists with is_active set to 0
+    steps:
+      - Apply the inactive coupon to a non-empty cart
+    expected: The response is 404.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_an_inactive_coupon_is_rejected
+    requirement: REQ-PRICE-05
+
+  - id: TC-CART-044
+    title: A coupon below its minimum spend is refused
+    module: cart
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm minimum-spend gating just under the bound.
+    preconditions:
+      - A coupon requiring 5000 cents of spend exists
+    steps:
+      - Build a cart worth well under 5000 cents
+      - Apply the coupon
+    expected: The response is 409 and the message names the minimum spend.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_a_coupon_below_its_minimum_spend_is_refused
+    requirement: REQ-PRICE-06
+
+  - id: TC-CART-045
+    title: A coupon at exactly its minimum spend is accepted
+    module: cart
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the inclusive side of the minimum-spend bound.
+    preconditions:
+      - A coupon requiring 5000 cents of spend exists
+    steps:
+      - Build a cart with a subtotal of exactly 5000 cents
+      - Apply the coupon
+    expected: The coupon is accepted with 200 and discounts exactly 1000 cents.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_a_coupon_at_exactly_its_minimum_spend_is_accepted
+    requirement: REQ-PRICE-06
+
+  - id: TC-CART-046
+    title: Clearing the cart also clears the applied coupon
+    module: cart
+    layer: api
+    type: functional
+    priority: P3
+    objective: Confirm a coupon does not survive the cart it was applied to.
+    preconditions:
+      - A coupon has been applied to a non-empty cart
+    steps:
+      - DELETE /api/cart
+    expected: The response is 200 with no coupon and a zero discount.
+    suites: [regression]
+    automation: tests/api/test_cart.py::test_clearing_the_cart_also_clears_the_applied_coupon
+    requirement: REQ-PRICE-07
+
+  - id: TC-CART-050
+    title: Two coupons cannot be stacked on one cart
+    module: cart
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm only one coupon applies once multi-coupon support is considered.
+    preconditions:
+      - Multiple coupon support is specified (not implemented in build 1.4.0)
+    steps:
+      - Apply one coupon, then apply a second
+      - Read the resulting discount
+    expected: >-
+      Only the most recently applied coupon is in force; discounts never
+      compound. Manual until the requirement is confirmed with product.
+    suites: [manual]
+    automation: null
+    requirement: REQ-PRICE-08

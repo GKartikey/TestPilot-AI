@@ -1,0 +1,330 @@
+# Checkout and order lifecycle. The revenue path.
+
+meta:
+  module: orders
+  owner: QA
+  requirement_source: docs/test-plan.md
+
+cases:
+  - id: TC-ORD-001
+    title: A customer can complete a checkout
+    module: orders
+    layer: api
+    type: smoke
+    priority: P1
+    objective: Confirm the critical revenue path works at all.
+    preconditions:
+      - An authenticated customer with one in-stock item in the cart
+    steps:
+      - POST /api/orders
+      - Inspect the order number, status and line items
+    expected: >-
+      The response is 201 with an order number prefixed "SN-", status "PLACED",
+      the expected line item and a positive total.
+    suites: [smoke, regression]
+    automation: tests/api/test_orders.py::test_a_customer_can_complete_a_checkout
+    requirement: REQ-ORD-01
+
+  - id: TC-ORD-002
+    title: Checkout empties the cart
+    module: orders
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm a placed order does not leave its items behind to be bought twice.
+    preconditions:
+      - An authenticated customer with items in the cart
+    steps:
+      - Place an order
+      - GET /api/cart
+    expected: The cart is empty.
+    suites: [smoke, regression]
+    automation: tests/api/test_orders.py::test_checkout_empties_the_cart
+    requirement: REQ-ORD-02
+
+  - id: TC-ORD-010
+    title: Order totals match the cart totals at the moment of checkout
+    module: orders
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm the price the customer saw is the price they are charged.
+    preconditions:
+      - A multi-line cart has been built
+    steps:
+      - Read the cart totals
+      - Place the order
+      - Compare every total component between cart and order
+    expected: Subtotal, discount, shipping, tax and total are identical in both.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_order_totals_match_the_cart_totals_at_the_moment_of_checkout
+    requirement: REQ-ORD-03
+
+  - id: TC-ORD-011
+    title: Order totals match the independent pricing oracle
+    module: orders
+    layer: api
+    type: functional
+    priority: P1
+    objective: Verify order maths against the documented rules rather than the application's own arithmetic.
+    preconditions:
+      - A discounted cart has been built
+    steps:
+      - Apply a 10% coupon to a two-unit cart
+      - Place the order
+      - Compare each total with the independently computed value
+    expected: Every component matches the value derived from the documented pricing rules.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_order_totals_match_the_independent_pricing_oracle
+    requirement: REQ-PRICE-01
+
+  - id: TC-ORD-012
+    title: Checkout decrements stock by the ordered quantity
+    module: orders
+    layer: api
+    type: data
+    priority: P1
+    objective: Confirm inventory actually moves, verified directly in SQL.
+    preconditions:
+      - The product's stock level is known before the test
+    steps:
+      - Read the product's stock from the database
+      - Order 3 units
+      - Read the stock again
+    expected: Stock has decreased by exactly 3.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_checkout_decrements_stock_by_the_ordered_quantity
+    requirement: REQ-ORD-04
+
+  - id: TC-ORD-013
+    title: Order line items store the price at purchase time
+    module: orders
+    layer: db
+    type: data
+    priority: P1
+    objective: >-
+      Confirm an order records its own prices. A line that reads the live
+      catalogue price would silently restate every historical order after a
+      price change.
+    preconditions:
+      - A known product price
+    steps:
+      - Order 2 units of a product
+      - Query order_items for that order
+    expected: >-
+      The stored unit price equals the catalogue price at purchase time and the
+      line total equals unit price multiplied by quantity.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_order_line_items_are_persisted_with_the_price_at_purchase_time
+    requirement: REQ-ORD-05
+
+  - id: TC-ORD-014
+    title: Each order receives a unique order number
+    module: orders
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm order numbers do not collide.
+    preconditions:
+      - An authenticated customer
+    steps:
+      - Place three orders in succession
+      - Collect the three order numbers
+    expected: All three order numbers are distinct.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_each_order_receives_a_unique_order_number
+    requirement: REQ-ORD-06
+
+  - id: TC-ORD-020
+    title: Checking out an empty cart is rejected
+    module: orders
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm an empty cart produces no order.
+    preconditions:
+      - The cart is empty
+    steps:
+      - POST /api/orders
+    expected: The response is 400 and the message says the cart is empty.
+    suites: [smoke, regression]
+    automation: tests/api/test_orders.py::test_checking_out_an_empty_cart_is_rejected
+    requirement: REQ-ORD-07
+
+  - id: TC-ORD-021
+    title: Checkout requires authentication
+    module: orders
+    layer: api
+    type: security
+    priority: P1
+    objective: Confirm anonymous checkout is impossible.
+    preconditions:
+      - No Authorization header is sent
+    steps:
+      - POST /api/orders with no token
+    expected: The response is 401.
+    suites: [smoke, regression]
+    automation: tests/api/test_orders.py::test_checkout_requires_authentication
+    requirement: REQ-SEC-03
+
+  - id: TC-ORD-022
+    title: Checkout is refused when stock disappears after the cart was built
+    module: orders
+    layer: api
+    type: negative
+    priority: P1
+    objective: >-
+      Reproduce the real-world race in which an item sells out between browsing
+      and paying. Failing to revalidate here means taking money for inventory
+      that does not exist.
+    preconditions:
+      - A product's stock can be manipulated during the test
+    steps:
+      - Set stock to 5 and add 5 units to the cart
+      - Reduce stock to 2, simulating another customer's purchase
+      - Attempt checkout
+    expected: Checkout returns 409 rather than creating an unfulfillable order.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_checkout_is_refused_when_stock_disappears_after_the_cart_was_built
+    requirement: REQ-ORD-08
+
+  - id: TC-ORD-023
+    title: A failed checkout leaves no partial order
+    module: orders
+    layer: db
+    type: data
+    priority: P1
+    objective: Confirm the checkout transaction is genuinely all-or-nothing.
+    preconditions:
+      - A cart that will fail its stock revalidation
+    steps:
+      - Record the order count before the attempt
+      - Force a stock shortfall and attempt checkout
+      - Re-check the order count, the stock level and the cart contents
+    expected: >-
+      No order row was created, no stock moved, and the cart still holds its
+      items so the customer can correct the problem.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_a_failed_checkout_leaves_no_partial_order
+    requirement: REQ-ORD-09
+
+  - id: TC-ORD-024
+    title: Checking out exactly the last unit in stock succeeds
+    module: orders
+    layer: api
+    type: boundary
+    priority: P1
+    objective: Confirm the inclusive edge of availability at checkout time.
+    preconditions:
+      - A product's stock is set to exactly 1
+    steps:
+      - Add 1 unit to the cart and check out
+      - Read the resulting stock level
+    expected: The order is created with 201 and stock falls to exactly 0.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_checking_out_exactly_the_last_unit_in_stock_succeeds
+    requirement: REQ-ORD-08
+
+  - id: TC-ORD-030
+    title: An order appears in the customer's history
+    module: orders
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm placed orders are retrievable afterwards.
+    preconditions:
+      - An authenticated customer who has just placed an order
+    steps:
+      - Place an order
+      - GET /api/orders
+    expected: The new order number is present in the history.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_an_order_appears_in_the_customers_history
+    requirement: REQ-ORD-10
+
+  - id: TC-ORD-031
+    title: An order can be retrieved by id with its line items
+    module: orders
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm detail retrieval returns the full order.
+    preconditions:
+      - An order exists for the calling customer
+    steps:
+      - Place an order for 2 units
+      - GET /api/orders/{id}
+    expected: The order number matches and the line item reports quantity 2.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_an_order_can_be_retrieved_by_id_with_its_line_items
+    requirement: REQ-ORD-10
+
+  - id: TC-ORD-032
+    title: Retrieving an unknown order returns not found
+    module: orders
+    layer: api
+    type: negative
+    priority: P3
+    objective: Confirm an id that does not exist is a 404.
+    preconditions:
+      - The id does not exist
+    steps:
+      - GET /api/orders/999999
+    expected: The response is 404.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_retrieving_an_unknown_order_returns_not_found
+    requirement: REQ-ORD-10
+
+  - id: TC-ORD-033
+    title: Cancelling an order restores its stock
+    module: orders
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm cancellation is a correct compensating transaction.
+    preconditions:
+      - An order exists in status PLACED
+    steps:
+      - Record stock, place an order for 2 units and confirm stock fell by 2
+      - Cancel the order
+      - Read the stock again
+    expected: The order status is CANCELLED and stock has returned to its original level.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_cancelling_an_order_restores_its_stock
+    requirement: REQ-ORD-11
+
+  - id: TC-ORD-034
+    title: Cancelling an already cancelled order is idempotent
+    module: orders
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm a double cancel does not credit stock twice.
+    preconditions:
+      - An order has already been cancelled
+    steps:
+      - Cancel an order, then cancel it a second time
+      - Read the stock level
+    expected: The second call returns 200 with status CANCELLED and stock is unchanged by it.
+    suites: [regression]
+    automation: tests/api/test_orders.py::test_cancelling_an_already_cancelled_order_is_idempotent
+    requirement: REQ-ORD-11
+
+  - id: TC-ORD-040
+    title: Two customers checking out the last unit concurrently
+    module: orders
+    layer: api
+    type: integration
+    priority: P1
+    objective: Confirm the transactional guard holds under genuine concurrency.
+    preconditions:
+      - A load-capable environment and a product with exactly one unit in stock
+    steps:
+      - Two authenticated customers each hold the last unit in their cart
+      - Both issue POST /api/orders simultaneously
+    expected: >-
+      Exactly one checkout succeeds and the other returns 409. Stock never goes
+      negative. Manual until a concurrency harness is added.
+    suites: [manual]
+    automation: null
+    requirement: REQ-ORD-12

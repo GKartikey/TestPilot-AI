@@ -1,0 +1,90 @@
+# Suite definitions.
+#
+# A suite is a named selection over the automated tests, plus the promise
+# it makes about how long it takes and when it runs. Each one translates
+# directly into a pytest invocation via Suite.pytest_args().
+
+suites:
+  smoke:
+    description: >-
+      Build acceptance. The shortest set of checks that answers "is this build
+      worth testing further?" It covers one path through every critical
+      capability: health, authentication, catalogue, cart, checkout and the
+      data integrity of what was just written. Runs on every push and must
+      finish inside a minute.
+    markers: [smoke]
+    paths: [tests]
+    max_duration_seconds: 60
+    fail_fast: true
+
+  regression:
+    description: >-
+      The full automated suite. Everything the team has ever automated,
+      including negative, boundary and security coverage. Runs on every pull
+      request and nightly on the main branch.
+    markers: [smoke, regression, negative, boundary]
+    paths: [tests]
+    max_duration_seconds: 900
+    fail_fast: false
+
+  api:
+    description: >-
+      Every REST API test. The fastest broad signal, and the layer where the
+      exhaustive permutations live.
+    markers: [api]
+    paths: [tests/api]
+    max_duration_seconds: 300
+
+  ui:
+    description: >-
+      Browser journeys driven with Playwright through the page object model.
+      Slowest layer, so it is kept deliberately small.
+    markers: [ui]
+    paths: [tests/ui]
+    max_duration_seconds: 600
+
+  db:
+    description: >-
+      SQL validation: schema contract, referential integrity and monetary
+      reconciliation against the stored rows.
+    markers: [db]
+    paths: [tests/db]
+    max_duration_seconds: 180
+
+  security:
+    description: >-
+      Authentication, authorisation and injection coverage, pulled together
+      across every layer for a focused security pass before a release.
+    markers: [auth]
+    paths: [tests]
+    max_duration_seconds: 300
+
+  boundary:
+    description: >-
+      Every limit, edge and off-by-one case in one run. Useful after a change
+      to validation rules or pricing thresholds.
+    markers: [boundary]
+    paths: [tests]
+    max_duration_seconds: 300
+
+  negative:
+    description: Invalid, malformed and hostile input across every layer.
+    markers: [negative]
+    paths: [tests]
+    max_duration_seconds: 300
+
+  platform:
+    description: >-
+      TestPilot's own unit tests, including the evidence gate. These must pass
+      before any result the platform reports can be trusted.
+    markers: [unit]
+    paths: [tests/framework]
+    max_duration_seconds: 120
+
+  headless_ci:
+    description: >-
+      What CI runs on a pull request: everything except tests marked slow.
+    markers: [smoke, regression, negative, boundary, unit]
+    deselect_markers: [slow]
+    paths: [tests]
+    max_duration_seconds: 900

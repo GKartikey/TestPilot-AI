@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cart - ShopNest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">ShopNest</span>
+  <nav>
+    <a href="/products" data-testid="nav-products">Products</a>
+    <a href="/cart" data-testid="nav-cart">Cart (<span data-testid="cart-count">0</span>)</a>
+    <a href="/orders" data-testid="nav-orders">Orders</a>
+  </nav>
+  <span class="spacer"></span>
+  <span data-testid="nav-session"></span>
+</header>
+
+<main>
+  <h1 data-testid="page-title">Your cart</h1>
+  <p class="lede">Orders over $50 after discount ship free. Tax is 8% of the discounted subtotal.</p>
+
+  <div class="alert error" data-testid="flash" hidden></div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th class="num">Unit price</th>
+          <th class="num">Qty</th>
+          <th class="num">Line total</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody data-testid="cart-rows"></tbody>
+    </table>
+
+    <p class="empty" data-testid="empty-cart" hidden>Your cart is empty.</p>
+
+    <div class="row" style="margin-top:16px; max-width:420px">
+      <div style="flex:1">
+        <label for="coupon">Coupon code</label>
+        <input id="coupon" data-testid="coupon-input" placeholder="SAVE10">
+      </div>
+      <button class="secondary" data-testid="apply-coupon">Apply</button>
+    </div>
+    <p class="muted" data-testid="applied-coupon" hidden></p>
+
+    <div class="totals">
+      <div><span>Subtotal</span><span data-testid="subtotal">$0.00</span></div>
+      <div><span>Discount</span><span data-testid="discount">-$0.00</span></div>
+      <div><span>Shipping</span><span data-testid="shipping">$0.00</span></div>
+      <div><span>Tax</span><span data-testid="tax">$0.00</span></div>
+      <div class="grand"><span>Total</span><span data-testid="total">$0.00</span></div>
+    </div>
+
+    <div style="margin-top:16px; text-align:right">
+      <button data-testid="checkout-button">Place order</button>
+    </div>
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+  const rows = document.querySelector("[data-testid='cart-rows']");
+
+  function renderRow(item) {
+    const tr = document.createElement("tr");
+    tr.setAttribute("data-testid", "cart-row");
+    tr.setAttribute("data-sku", item.sku);
+    tr.innerHTML = `
+      <td data-testid="row-name">${item.name}<div class="sku">${item.sku}</div></td>
+      <td class="num" data-testid="row-unit-price">${money(item.unit_price_cents)}</td>
+      <td class="num"><input type="number" min="1" max="10" value="${item.quantity}"
+            data-testid="row-qty" style="width:74px; text-align:right"></td>
+      <td class="num" data-testid="row-line-total">${money(item.line_total_cents)}</td>
+      <td class="num"><button class="secondary" data-testid="row-remove">Remove</button></td>`;
+
+    tr.querySelector("[data-testid='row-qty']").addEventListener("change", async (event) => {
+      clearFlash();
+      const quantity = Number(event.target.value);
+      try {
+        render(await api(`/api/cart/items/${item.product_id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ product_id: item.product_id, quantity }),
+        }));
+      } catch (error) {
+        flash(error.message, "error");
+        load();
+      }
+    });
+
+    tr.querySelector("[data-testid='row-remove']").addEventListener("click", async () => {
+      clearFlash();
+      try {
+        render(await api(`/api/cart/items/${item.product_id}`, { method: "DELETE" }));
+      } catch (error) {
+        flash(error.message, "error");
+      }
+    });
+    return tr;
+  }
+
+  function render(cart) {
+    rows.innerHTML = "";
+    cart.items.forEach((item) => rows.appendChild(renderRow(item)));
+    document.querySelector("[data-testid='empty-cart']").hidden = cart.items.length > 0;
+
+    const totals = cart.totals;
+    document.querySelector("[data-testid='subtotal']").textContent = money(totals.subtotal_cents);
+    document.querySelector("[data-testid='discount']").textContent = `-${money(totals.discount_cents)}`;
+    document.querySelector("[data-testid='shipping']").textContent = money(totals.shipping_cents);
+    document.querySelector("[data-testid='tax']").textContent = money(totals.tax_cents);
+    document.querySelector("[data-testid='total']").textContent = money(totals.total_cents);
+
+    const couponNote = document.querySelector("[data-testid='applied-coupon']");
+    couponNote.hidden = !cart.coupon;
+    couponNote.textContent = cart.coupon ? `Coupon ${cart.coupon} applied` : "";
+
+    document.querySelector("[data-testid='checkout-button']").disabled = cart.items.length === 0;
+    document.querySelector("[data-testid='cart-count']").textContent =
+      String(cart.items.reduce((sum, item) => sum + item.quantity, 0));
+    markReady("cart");
+  }
+
+  async function load() {
+    if (!requireLogin()) return;
+    try {
+      render(await api("/api/cart"));
+    } catch (error) {
+      flash(error.message, "error");
+      markReady("cart");
+    }
+  }
+
+  document.querySelector("[data-testid='apply-coupon']").addEventListener("click", async () => {
+    clearFlash();
+    try {
+      const code = document.querySelector("[data-testid='coupon-input']").value;
+      render(await api("/api/cart/coupon", { method: "POST", body: JSON.stringify({ code }) }));
+      flash("Coupon applied.", "success");
+    } catch (error) {
+      flash(error.message, "error");
+    }
+  });
+
+  document.querySelector("[data-testid='checkout-button']").addEventListener("click", async () => {
+    clearFlash();
+    const button = document.querySelector("[data-testid='checkout-button']");
+    button.disabled = true;
+    try {
+      const order = await api("/api/orders", { method: "POST" });
+      window.location.href = `/orders?placed=${encodeURIComponent(order.order_number)}`;
+    } catch (error) {
+      flash(error.message, "error");
+      button.disabled = false;
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>

@@ -1,0 +1,350 @@
+# Catalogue: search, filtering, sorting, pagination and product admin.
+
+meta:
+  module: products
+  owner: QA
+  requirement_source: docs/test-plan.md
+
+cases:
+  - id: TC-PROD-001
+    title: The health endpoint reports the service is up
+    module: products
+    layer: api
+    type: smoke
+    priority: P1
+    objective: The cheapest possible build-acceptance signal.
+    preconditions:
+      - The service has been deployed
+    steps:
+      - GET /health
+    expected: The response is 200 with status "ok" and a non-zero product count.
+    suites: [smoke, regression]
+    automation: tests/api/test_products.py::test_health_endpoint_reports_the_service_is_up
+    requirement: REQ-OPS-01
+
+  - id: TC-PROD-002
+    title: Product listing returns the seeded catalogue
+    module: products
+    layer: api
+    type: functional
+    priority: P1
+    objective: Confirm the catalogue is readable anonymously and matches the documented schema.
+    preconditions:
+      - The catalogue is seeded with at least ten products
+    steps:
+      - GET /api/products with no parameters
+      - Inspect total, page_size and the fields on the first item
+    expected: >-
+      The response is 200, total is at least 10, and every item carries id, sku,
+      name, category, price_cents, price, stock and in_stock. The decimal price
+      equals price_cents divided by 100.
+    suites: [smoke, regression]
+    automation: tests/api/test_products.py::test_product_listing_returns_the_seeded_catalogue
+    requirement: REQ-CAT-01
+
+  - id: TC-PROD-003
+    title: A single product can be fetched by id
+    module: products
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm detail retrieval agrees with the listing.
+    preconditions:
+      - A known SKU exists in the catalogue
+    steps:
+      - Look the product up by SKU in the listing
+      - GET /api/products/{id} for that product
+    expected: The detail response is 200 and its SKU and price match the listing.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_a_single_product_can_be_fetched_by_id
+    requirement: REQ-CAT-02
+
+  - id: TC-PROD-010
+    title: An unknown product id returns not found
+    module: products
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm unknown resources are reported rather than fabricated.
+    preconditions:
+      - The id is not present in the catalogue
+    steps:
+      - GET /api/products/999999
+    expected: The response is 404 with a descriptive detail message.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_an_unknown_product_id_returns_not_found
+    requirement: REQ-CAT-03
+
+  - id: TC-PROD-011
+    title: A non-integer product id is rejected
+    module: products
+    layer: api
+    type: negative
+    priority: P3
+    objective: Confirm path parameter typing is enforced.
+    preconditions:
+      - None
+    steps:
+      - Request the product detail path with letters, a decimal, a negative
+        number and an encoded space in place of the id
+    expected: Every variant returns 404 or 422; none returns a product.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_a_non_integer_product_id_is_rejected
+    requirement: REQ-CAT-03
+
+  - id: TC-PROD-020
+    title: Search matches on both product name and SKU
+    module: products
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm both documented search fields are covered.
+    preconditions:
+      - A product with a known name and SKU exists
+    steps:
+      - GET /api/products with q set to part of the product name
+      - GET /api/products with q set to the exact SKU
+    expected: The name search returns at least one match; the SKU search returns exactly that product.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_search_matches_on_both_name_and_sku
+    requirement: REQ-CAT-04
+
+  - id: TC-PROD-021
+    title: A search with no matches returns an empty page, not an error
+    module: products
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm the empty result set is a success response.
+    preconditions:
+      - None
+    steps:
+      - GET /api/products with a query term that matches nothing
+    expected: The response is 200 with total 0, an empty items array and pages 0.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_search_with_no_matches_returns_an_empty_page_not_an_error
+    requirement: REQ-CAT-04
+
+  - id: TC-PROD-022
+    title: The category filter returns only that category
+    module: products
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm filtering is exact rather than a substring match.
+    preconditions:
+      - At least two categories exist
+    steps:
+      - GET /api/products/categories
+      - GET /api/products filtered by the first category returned
+    expected: Every item in the filtered response carries exactly that category.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_category_filter_returns_only_that_category
+    requirement: REQ-CAT-05
+
+  - id: TC-PROD-023
+    title: The in-stock filter excludes unavailable products
+    module: products
+    layer: api
+    type: functional
+    priority: P2
+    objective: Confirm out-of-stock products are hidden when requested.
+    preconditions:
+      - At least one seeded product has zero stock
+    steps:
+      - GET /api/products unfiltered and confirm the zero-stock SKU is present
+      - GET /api/products with in_stock_only=true
+    expected: The filtered response excludes the zero-stock SKU and every item has stock above zero.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_in_stock_filter_excludes_unavailable_products
+    requirement: REQ-CAT-06
+
+  - id: TC-PROD-024
+    title: Sorting by price returns ascending prices
+    module: products
+    layer: api
+    type: functional
+    priority: P3
+    objective: Confirm the sort parameter is applied.
+    preconditions:
+      - Products of differing prices exist
+    steps:
+      - GET /api/products with sort=price and a page size covering the catalogue
+    expected: The returned price_cents values are in non-descending order.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_sorting_by_price_returns_ascending_prices
+    requirement: REQ-CAT-07
+
+  - id: TC-PROD-030
+    title: Pagination honours the requested page size
+    module: products
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Exercise page_size across its documented 1..100 range.
+    preconditions:
+      - The catalogue holds more products than the smallest page size
+    steps:
+      - Request page 1 with page_size 1, 2, 10 and 100
+      - Compare the item count and the reported page count each time
+    expected: >-
+      Each response returns at most page_size items, echoes the requested
+      page_size, and reports pages as ceil(total / page_size).
+    test_data:
+      minimum: 1
+      maximum: 100
+    suites: [regression]
+    automation: tests/api/test_products.py::test_pagination_honours_the_requested_page_size
+    requirement: REQ-CAT-08
+
+  - id: TC-PROD-031
+    title: A page size outside the documented range is rejected
+    module: products
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm the other half of the page_size boundary.
+    preconditions:
+      - None
+    steps:
+      - Request page_size 0, -1, 101 and 10000
+    expected: Every out-of-range value returns 422.
+    test_data:
+      values: [0, -1, 101, 10000]
+    suites: [regression]
+    automation: tests/api/test_products.py::test_page_size_outside_the_documented_range_is_rejected
+    requirement: REQ-CAT-08
+
+  - id: TC-PROD-032
+    title: Requesting a page beyond the last returns an empty page
+    module: products
+    layer: api
+    type: boundary
+    priority: P3
+    objective: Confirm over-paging is an empty result rather than an error.
+    preconditions:
+      - The catalogue is not empty
+    steps:
+      - GET /api/products with page 9999
+    expected: The response is 200 with an empty items array while total still reports the real catalogue size.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_requesting_a_page_beyond_the_last_returns_an_empty_page
+    requirement: REQ-CAT-08
+
+  - id: TC-PROD-033
+    title: Pages do not overlap or skip products
+    module: products
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm paging arithmetic yields each product exactly once.
+    preconditions:
+      - The catalogue holds at least eight products
+    steps:
+      - Fetch page 1 and page 2 at a page size of 4, sorted by name
+      - Compare the two id sets, then compare their concatenation with the first
+        eight ids of the unpaginated listing
+    expected: The two pages share no ids and together match the first eight products in the same order.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_pages_do_not_overlap_or_skip_products
+    requirement: REQ-CAT-08
+
+  - id: TC-PROD-034
+    title: An inverted price range is rejected
+    module: products
+    layer: api
+    type: negative
+    priority: P3
+    objective: Confirm a minimum above the maximum is a client error rather than a silent empty list.
+    preconditions:
+      - None
+    steps:
+      - GET /api/products with min_price_cents greater than max_price_cents
+    expected: The response is 400.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_an_inverted_price_range_is_rejected
+    requirement: REQ-CAT-09
+
+  - id: TC-PROD-035
+    title: Price filters are inclusive at both bounds
+    module: products
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Confirm a product priced exactly on the bound is included.
+    preconditions:
+      - A product with a known price exists
+    steps:
+      - Read a product's exact price
+      - GET /api/products with min_price_cents and max_price_cents both set to that price
+    expected: The product appears in the results, proving both bounds are inclusive.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_price_filters_are_inclusive_at_both_bounds
+    requirement: REQ-CAT-09
+
+  - id: TC-PROD-036
+    title: Search terms containing markup are handled as data
+    module: products
+    layer: api
+    type: security
+    priority: P2
+    objective: Confirm script and markup payloads are treated as ordinary search text.
+    preconditions:
+      - None
+    steps:
+      - Search using a script tag, an img onerror payload and an svg onload payload
+    expected: Each search returns 200 with no matches and no error.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_search_terms_containing_markup_are_handled_as_data
+    requirement: REQ-SEC-10
+
+  - id: TC-PROD-040
+    title: Creating a product with a duplicate SKU is a conflict
+    module: products
+    layer: api
+    type: negative
+    priority: P2
+    objective: Confirm SKU uniqueness is enforced at the API, not only in the database.
+    preconditions:
+      - An admin session is authenticated
+    steps:
+      - Create a product with a unique SKU
+      - Create a second product with the same SKU
+    expected: The first call returns 201 and the second returns 409.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_creating_a_product_with_a_duplicate_sku_is_a_conflict
+    requirement: REQ-CAT-10
+
+  - id: TC-PROD-041
+    title: Product creation validates its fields
+    module: products
+    layer: api
+    type: boundary
+    priority: P2
+    objective: Exercise every documented constraint on the product creation schema.
+    preconditions:
+      - An admin session is authenticated
+    steps:
+      - Attempt creation with a negative price, negative stock, a two-character
+        SKU, a blank name and a price above the documented maximum
+    expected: Every variant returns 422 and no product row is created.
+    suites: [regression]
+    automation: tests/api/test_products.py::test_product_creation_validates_its_fields
+    requirement: REQ-CAT-10
+
+  - id: TC-PROD-050
+    title: Catalogue images render at every supported breakpoint
+    module: products
+    layer: ui
+    type: functional
+    priority: P4
+    objective: Confirm the responsive grid holds together on small screens.
+    preconditions:
+      - Product imagery is implemented (not yet in build 1.4.0)
+    steps:
+      - Load the catalogue at 360px, 768px and 1366px viewport widths
+      - Confirm no card overflows its container and no image is stretched
+    expected: The grid reflows without overflow at every breakpoint. Manual until imagery ships.
+    suites: [manual]
+    automation: null
+    requirement: REQ-CAT-11

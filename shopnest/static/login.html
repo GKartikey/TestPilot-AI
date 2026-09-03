@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in - ShopNest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">ShopNest</span>
+  <nav>
+    <a href="/products" data-testid="nav-products">Products</a>
+    <a href="/cart" data-testid="nav-cart">Cart (<span data-testid="cart-count">0</span>)</a>
+    <a href="/orders" data-testid="nav-orders">Orders</a>
+  </nav>
+  <span class="spacer"></span>
+  <span data-testid="nav-session"></span>
+</header>
+
+<main>
+  <h1 data-testid="page-title">Sign in</h1>
+  <p class="lede">Use your ShopNest account to continue to checkout.</p>
+
+  <div class="card" style="max-width:420px">
+    <div class="alert error" data-testid="flash" hidden></div>
+    <form data-testid="login-form" novalidate>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" data-testid="email-input">
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" data-testid="password-input">
+
+      <div style="margin-top:18px" class="row">
+        <button type="submit" data-testid="login-submit">Sign in</button>
+        <a href="/register" data-testid="register-link" class="muted">Create an account</a>
+      </div>
+    </form>
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+  document.querySelector("[data-testid='login-form']").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    clearFlash();
+    const submit = document.querySelector("[data-testid='login-submit']");
+    submit.disabled = true;
+    try {
+      const payload = {
+        email: document.querySelector("[data-testid='email-input']").value,
+        password: document.querySelector("[data-testid='password-input']").value,
+      };
+      const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify(payload) });
+      Session.save(result.access_token, result.user);
+      window.location.href = "/products";
+    } catch (error) {
+      flash(error.message, "error");
+      submit.disabled = false;
+    }
+  });
+
+  markReady("login");
+</script>
+</body>
+</html>
