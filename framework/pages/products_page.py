@@ -47,9 +47,25 @@ class ProductsPage(BasePage):
         return self.wait_until_ready()
 
     def add_to_cart(self, sku: str) -> "ProductsPage":
+        """Add one unit and wait for the cart to actually reflect it.
+
+        The click fires an asynchronous POST. Returning before that
+        request completes lets a caller navigate away mid-flight — the
+        cart page then loads without the item and the next action fails
+        on a slower machine while passing on a fast one. Waiting on the
+        badge, which the page updates only after the POST succeeds, ties
+        the method to the outcome rather than to the click.
+        """
         card = self.card_for(sku)
         card.wait_for(state="visible", timeout=8_000)
+        before = self.cart_count
         self.within(card, "add-to-cart").click()
+        self.page.wait_for_function(
+            "expected => document.querySelector('[data-testid=cart-count]')"
+            "?.textContent.trim() === String(expected)",
+            arg=before + 1,
+            timeout=10_000,
+        )
         return self
 
     def go_to_cart(self) -> "CartPage":
